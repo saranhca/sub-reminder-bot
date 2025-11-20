@@ -2,24 +2,19 @@ require("dotenv").config();
 const { Bot } = require("grammy");
 const fs = require("fs");
 const path = require("path");
+const http = require("http"); // <-- добавили
 
-// Создаём бота
+// Создаём объект бота
 const bot = new Bot(process.env.BOT_TOKEN);
-
-// Файл, где храним напоминания
 const DATA_FILE = path.join(__dirname, "reminders.json");
-
-// Временное состояние диалогов по чатам
 const state = Object.create(null);
 
-// ---------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------------
-
+// -------- вспомогательные функции --------
 function loadReminders() {
   try {
     const data = fs.readFileSync(DATA_FILE, "utf-8");
     return JSON.parse(data);
   } catch (e) {
-    // Если файла ещё нет или он битый - возвращаем пустой список
     return [];
   }
 }
@@ -29,21 +24,16 @@ function saveReminders(reminders) {
 }
 
 function generateId() {
-  return (
-    Date.now().toString() + Math.floor(Math.random() * 1000000).toString()
-  );
+  return Date.now().toString() + Math.floor(Math.random() * 1000000).toString();
 }
 
 function isValidDateString(str) {
-  // Формат ГГГГ-ММ-ДД
   if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
   const date = new Date(str + "T00:00:00");
   return !isNaN(date.getTime());
 }
 
-// ---------------- КОМАНДЫ БОТА ----------------
-
-// /start
+// -------- команды бота --------
 bot.command("start", async (ctx) => {
   await ctx.reply(
     "Привет! Я бот-напоминалка по подпискам.\n\n" +
@@ -54,14 +44,12 @@ bot.command("start", async (ctx) => {
   );
 });
 
-// /add - запуск диалога добавления подписки
 bot.command("add", async (ctx) => {
   const chatId = ctx.chat.id;
   state[chatId] = { step: "waitingName" };
   await ctx.reply("Введи название подписки (например: Яндекс Плюс):");
 });
 
-// /list - показать все напоминания пользователя
 bot.command("list", async (ctx) => {
   const chatId = ctx.chat.id;
   const reminders = loadReminders().filter((r) => r.chatId === chatId);
@@ -86,25 +74,18 @@ bot.command("list", async (ctx) => {
   await ctx.reply(text);
 });
 
-// Обработка обычного текста (для диалога /add)
 bot.on("message:text", async (ctx) => {
   const chatId = ctx.chat.id;
   const msg = ctx.message.text.trim();
 
-  // Если пользователь внезапно отправил команду - не портим диалог
   if (msg.startsWith("/")) return;
 
   const userState = state[chatId];
-  if (!userState) {
-    // Никакого активного диалога нет - просто игнорируем
-    return;
-  }
+  if (!userState) return;
 
-  // Шаг 1: ждём название подписки
   if (userState.step === "waitingName") {
     userState.tempName = msg;
     userState.step = "waitingDate";
-
     await ctx.reply(
       "Отлично! Теперь введи дату окончания подписки в формате ГГГГ-ММ-ДД.\n\n" +
         "Например: 2025-12-10"
@@ -112,7 +93,6 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // Шаг 2: ждём дату окончания
   if (userState.step === "waitingDate") {
     const dateStr = msg;
 
@@ -123,7 +103,7 @@ bot.on("message:text", async (ctx) => {
       return;
     }
 
-    const endDate = new Date(dateStr + "T09:00:00"); // 9 утра
+    const endDate = new Date(dateStr + "T09:00:00");
     const remindAt = new Date(endDate.getTime() - 5 * 24 * 60 * 60 * 1000);
 
     const reminders = loadReminders();
@@ -131,14 +111,13 @@ bot.on("message:text", async (ctx) => {
       id: generateId(),
       chatId: chatId,
       name: userState.tempName,
-      endDate: dateStr, // строка, как ввёл пользователь
-      remindAt: remindAt.toISOString(), // ISO-строка для сравнения
+      endDate: dateStr,
+      remindAt: remindAt.toISOString(),
       notified: false,
     };
 
     reminders.push(newReminder);
     saveReminders(reminders);
-
     delete state[chatId];
 
     await ctx.reply(
@@ -151,8 +130,7 @@ bot.on("message:text", async (ctx) => {
   }
 });
 
-// ---------------- ФОНОВАЯ ПРОВЕРКА НАПОМИНАНИЙ ----------------
-
+// -------- фоновая проверка напоминаний --------
 async function checkReminders() {
   const reminders = loadReminders();
   const now = new Date();
@@ -179,15 +157,28 @@ async function checkReminders() {
     }
   }
 
-  if (changed) {
-    saveReminders(reminders);
-  }
+  if (changed) saveReminders(reminders);
 }
 
-// Проверяем раз в минуту
 setInterval(checkReminders, 60 * 1000);
 
-// ---------------- ЗАПУСК БОТА ----------------
+// -------- HTTP-сервер для Render (Web Service Free) --------
 
+// Render ждёт, что приложение будет слушать порт.
+// PORT он передаёт через переменную окружения process.env.PORT.
+// Если её нет (локальный запуск), используем 3000.
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+  // Простейший ответ, чтобы Render видел "живой" сервис.
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("Bot is running.\n");
+});
+
+server.listen(PORT, () => {
+  console.log("HTTP-сервер запущен на порту", PORT);
+});
+
+// -------- запуск бота --------
 bot.start();
 console.log("Бот запущен.");
